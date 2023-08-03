@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+
+shopt -s extglob
+shopt -s globstar
+
+SITE_DIR="_site/"
+TEMPLATE_DIR="_templates/"
+OUTPUT_DIR=".site/"
+CONFIG_DIR=".data/"
+
+# parse parameters
+while test $# -gt 0; do
+  case $1 in
+    -w|--wiki)
+      MODE="wiki"
+      shift;;
+    -s|--site)
+      MODE="site"
+      shift;;
+    -j|--jekyll) # jekyll mode is entirely unimplemented
+      MODE="jekyll"
+      shift;;
+    -o|--output)
+      shift
+      OUTPUT_DIR="$1"
+      shift;;
+    -t|--templates)
+      shift
+      TEMPLATE_DIR="$1"
+      shift;;
+    -h|--help)
+      echo "usage: sticks [flags]"
+      echo "  -s, --site: run sticks in site mode (default)"
+      echo "  -w, --wiki: run sticks in wiki mode (file hierarchies are compressed)"
+      echo "  -j, --jekyll: run sticks in jekyll mode (unimplemented)"
+      echo "  -o <arg>, --output <arg>: specify the output directory. default: _site"
+      echo "  -t <arg>, --templates <arg>: specify where sticks should look for templates. default: _templates"
+      exit 0;;
+    *)
+      echo "$0: unknown argument $1"
+      exit 1;;
+  esac
+done
+
+# force a default template
+if [ ! -f "$TEMPLATE_DIR/default.html" ]; then
+  echo "sticks requires a template directory containing at least default.html"
+  exit 1
+fi
+
+# prep _ folders
+rm -rf "$SITE_DIR" "$OUTPUT_DIR" "$CONFIG_DIR"
+mkdir "$CONFIG_DIR"
+mv "$TEMPLATE_DIR" "$CONFIG_DIR/templates"
+mv "$CONFIG_DIR/templates/default.html" "$CONFIG_DIR/templates/default.html5"
+
+# pandoc will not automatically create directories for its output
+for dir in **/*/; do
+  mkdir -p "$OUTPUT_DIR/$dir"
+done
+
+# convert supported files to html/pdf
+for file in **/*.@(html|md|rst|org|adoc|tex|latex|typ); do
+  filename="$file"
+  if [ "$MODE" = "wiki" ]; then
+    filename="$(basename "$file")"
+  fi
+  if [ -f "$OUTPUT_DIR/${filename%.*}.html" ]; then
+    echo "warning: multiple conflicting entries ${filename%.*}"
+  fi
+  case ${file##*.} in
+    tex|latex|typ)
+      pandoc --standalone --quiet --data-dir "$CONFIG_DIR" \
+      --output "$OUTPUT_DIR/${filename%.*}.pdf" "$file"
+      ;;
+    *)
+      template="$(sed -ne '/^template:/{s/^template: *//p;q}' "$file")"
+      if [ -z "$template" ]; then
+        template="default.html5"
+      fi
+      pandoc --standalone --quiet --data-dir "$CONFIG_DIR" --template "$template" \
+      --output "$OUTPUT_DIR/${filename%.*}.html" "$file"
+      ;;
+  esac
+done
+
+# copy unprocessed files directly (incl. css & latex)
+for file in **/!(*.@(html|md|rst|org|adoc)); do
+  if [ -f "$file" ]; then
+    cp "$file" "$OUTPUT_DIR/$file"
+  fi
+done
+
+# clear cache & update site
+mv "$OUTPUT_DIR" "$SITE_DIR"
+mv "$CONFIG_DIR/templates/default.html5" "$CONFIG_DIR/templates/default.html"
+mv "$CONFIG_DIR/templates" "$TEMPLATE_DIR"
+rm -rf "$OUTPUT_DIR" "$CONFIG_DIR"
